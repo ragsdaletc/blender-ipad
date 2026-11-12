@@ -1,0 +1,130 @@
+name: Build Blender for iPad
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: Git repository holding the iPad branch
+        default: https://projects.blender.org/WilliamReynish/blender.git
+      source_ref:
+        description: Branch, tag or commit to build
+        default: native-ipados-ui
+      deployment_target:
+        description: Minimum iPadOS version for the app
+        default: "27.0"
+      bundle_id:
+        description: App bundle identifier (Sideloadly may replace it)
+        default: com.ragsdaletc.blender
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    env:
+      SRC: ${{ github.workspace }}/blender
+      BUILD: ${{ github.workspace }}/build_ios
+      TOOLS: ${{ github.workspace }}/host_tools
+      OUT: ${{ github.workspace }}/out
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      DEPLOY_TARGET: ${{ inputs.deployment_target }}
+      BUNDLE_ID: ${{ inputs.bundle_id }}
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
+    steps:
+      - name: Show runner
+        run: |
+          mkdir -p "$OUT"
+          sw_vers
+          xcodebuild -version
+          echo "CPU cores: $(sysctl -n hw.ncpu)"
+          df -h /
+
+      - name: Free disk space
+        run: |
+          # Large SDKs this build never uses.
+          sudo rm -rf ~/Library/Android/sdk /usr/local/share/dotnet ~/.dotnet ~/.ghcup || true
+          df -h /
+
+      - name: Get Blender source
+        run: |
+          git lfs install
+          git init -q "$SRC"
+          cd "$SRC"
+          git remote add origin "$SOURCE_REPO"
+          git fetch --depth 1 origin "$SOURCE_REF"
+          git checkout -q FETCH_HEAD
+          # Templates and starter assets are stored with Git LFS.
+          git lfs pull
+          git log -1 --format='Building %H: %s' | tee "$OUT/source.txt"
+
+      - name: Get prebuilt libraries
+        run: |
+          cd "$SRC"
+          # The branch points lib/ios_arm64 at matching prebuilt iOS libraries.
+          # lib/macos_arm64 is used to build the Mac host tools.
+          for lib in lib/ios_arm64 lib/macos_arm64; do
+            echo "::group::$lib"
+            if git -c "submodule.$lib.update=checkout" submodule update --init --depth 1 "$lib" \
+              || git -c "submodule.$lib.update=checkout" submodule update --init "$lib"; then
+              git -C "$lib" lfs pull
+              du -sh "$lib"
+            else
+              echo "::warning::Could not fetch $lib"
+            fi
+            echo "::endgroup::"
+          done
+          df -h /
+
+      - name: Configure
+        run: |
+          cmake -S "$SRC" -B "$BUILD" -G Xcode \
+            -DWITH_APPLE_CROSSPLATFORM=ON \
+            -DAPPLE_TARGET_DEVICE=ios \
+            -DIOS_MIN_DEPLOYMENT_TARGET="$DEPLOY_TARGET" \
+            -DIOS_BUNDLE_VERSION="${{ github.run_number }}" \
+            -DLIBDIR="$SRC/lib/ios_arm64" \
+            -DCROSSCOMPILE_TOOLDIR="$TOOLS" \
+            -DCMAKE_XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
+            -DWITH_INSTALL_COPYRIGHT=ON \
+            2>&1 | tee "$OUT/configure.log"
+
+      - name: Build host tools and Blender
+        run: |
+          cmake --build "$BUILD" --config Release --target blender -- \
+            -sdk iphoneos -quiet CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$OUT/build.log"
+          df -h /
+
+      - name: Package .ipa
+        run: |
+          APP=$(find "$BUILD/bin" -maxdepth 3 -type d -name 'Blender.app' | head -n 1)
+          if [ -z "$APP" ]; then echo "::error::Blender.app not found"; exit 1; fi
+          echo "Built app: $APP"
+
+          # Turns native libraries into frameworks and fixes Python's layout for iOS.
+          STAGE="$GITHUB_WORKSPACE/stage"
+          mkdir -p "$STAGE/Payload" "$GITHUB_WORKSPACE/replacements"
+          python3 "$SRC/release/ios/prepare_testflight.py" "$APP" "$STAGE/Payload/Blender.app" \
+            --replacement-directory "$GITHUB_WORKSPACE/replacements" \
+            2>&1 | tee "$OUT/package.log"
+
+          cd "$STAGE"
+          zip -qry "$OUT/Blender-iPad.ipa" Payload
+          ls -lh "$OUT"
+
+      - name: Upload .ipa and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-ipad-${{ github.run_number }}
+          path: out/
+          compression-level: 0
+          if-no-files-found: warn
