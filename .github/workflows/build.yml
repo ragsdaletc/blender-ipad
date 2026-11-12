@@ -94,6 +94,7 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
             -DWITH_INSTALL_COPYRIGHT=ON \
+            -DWITH_OPENAL=OFF \
             2>&1 | tee "$OUT/configure.log"
 
       - name: Build host tools and Blender
