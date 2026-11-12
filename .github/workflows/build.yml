@@ -80,6 +80,16 @@ jobs:
           done
           df -h /
 
+      - name: Give host tools FlatBuffers
+        run: |
+          # The host tools need FlatBuffers, which the stock macOS libraries lack.
+          # The iOS set carries the same version with a Mac-native flatc, so reuse it.
+          cd "$SRC/lib"
+          if [ ! -e macos_arm64/flatbuffers/bin/flatc ]; then
+            cp -R ios_arm64/flatbuffers macos_arm64/
+          fi
+          file macos_arm64/flatbuffers/bin/flatc
+
       - name: Configure
         run: |
           cmake -S "$SRC" -B "$BUILD" -G Xcode \
