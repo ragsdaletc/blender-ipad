@@ -120,8 +120,31 @@ jobs:
               EXPANDED_CODE_SIGN_IDENTITY=- \
               2>&1 | tee -a "$OUT/build.log"
             echo "::endgroup::"
+            if [ "$target" = blender-thumbnailer ]; then
+              # Xcode checks that the embedded extension is signed like the app, which the
+              # linker signs ad hoc. Sign the extension ad hoc too; Sideloadly re-signs both.
+              APPEX=$(find "$BUILD/bin" -maxdepth 3 -type d -name 'blender-thumbnailer.appex' | head -n 1)
+              if [ -z "$APPEX" ]; then echo "::error::blender-thumbnailer.appex not found"; exit 1; fi
+              codesign -s - -f "$APPEX"
+              codesign -dv "$APPEX" 2>&1 | head -n 5
+            fi
           done
           df -h /
+
+      - name: Save the built app
+        # Kept apart from the .ipa so the packaging step can be retried without recompiling.
+        run: |
+          APP=$(find "$BUILD/bin" -maxdepth 3 -type d -name 'Blender.app' | head -n 1)
+          mkdir -p "$GITHUB_WORKSPACE/raw"
+          tar -C "$(dirname "$APP")" -cf "$GITHUB_WORKSPACE/raw/Blender.app.tar" Blender.app
+          ls -lh "$GITHUB_WORKSPACE/raw"
+
+      - name: Upload the built app
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-app-raw-${{ github.run_number }}
+          path: raw/Blender.app.tar
+          compression-level: 6
 
       - name: Package .ipa
         run: |
