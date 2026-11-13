@@ -1,0 +1,78 @@
+name: Package Blender for iPad
+
+# Re-packages the app saved by an earlier build run, without recompiling.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Run ID of the build to package (the number at the end of its Actions URL)
+        required: true
+      source_repo:
+        description: Git repository holding the iPad branch
+        default: https://projects.blender.org/WilliamReynish/blender.git
+      source_ref:
+        description: Branch the build used
+        default: native-ipados-ui
+      leave_out:
+        description: Python packages to leave out of the app (space-separated)
+        default: numpy
+
+permissions:
+  actions: read
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      LEAVE_OUT: ${{ inputs.leave_out }}
+      OUT: ${{ github.workspace }}/out
+
+    steps:
+      - name: Get packaging script
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - name: Download the built app
+        uses: actions/download-artifact@v4
+        with:
+          pattern: blender-app-raw-*
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: raw
+          merge-multiple: true
+
+      - name: Unpack the app
+        run: |
+          mkdir -p app "$OUT"
+          tar -xf raw/Blender.app.tar -C app
+          du -sh app/Blender.app
+
+      - name: Get Blender's packaging scripts
+        run: |
+          GIT_LFS_SKIP_SMUDGE=1 git clone -q --depth 1 --filter=blob:none --sparse \
+            --branch "$SOURCE_REF" "$SOURCE_REPO" src
+          git -C src sparse-checkout set release/ios
+
+      - name: Package .ipa
+        run: |
+          # LEAVE_OUT is intentionally unquoted: it is a space-separated list.
+          bash ci/package_ipa.sh app/Blender.app src "$OUT" $LEAVE_OUT 2>&1 | tee "$OUT/package.log"
+
+      - name: Upload .ipa and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-ipad-pkg-${{ github.run_number }}
+          path: out/
+          compression-level: 0
+          if-no-files-found: warn

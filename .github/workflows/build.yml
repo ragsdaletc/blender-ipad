@@ -15,6 +15,9 @@ on:
       bundle_id:
         description: App bundle identifier (Sideloadly may replace it)
         default: com.ragsdaletc.blender
+      leave_out:
+        description: Python packages to leave out of the app (space-separated)
+        default: numpy
 
 defaults:
   run:
@@ -33,6 +36,7 @@ jobs:
       SOURCE_REF: ${{ inputs.source_ref }}
       DEPLOY_TARGET: ${{ inputs.deployment_target }}
       BUNDLE_ID: ${{ inputs.bundle_id }}
+      LEAVE_OUT: ${{ inputs.leave_out }}
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
     steps:
@@ -146,22 +150,18 @@ jobs:
           path: raw/Blender.app.tar
           compression-level: 6
 
+      - name: Get packaging script
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
       - name: Package .ipa
         run: |
           APP=$(find "$BUILD/bin" -maxdepth 3 -type d -name 'Blender.app' | head -n 1)
           if [ -z "$APP" ]; then echo "::error::Blender.app not found"; exit 1; fi
           echo "Built app: $APP"
-
-          # Turns native libraries into frameworks and fixes Python's layout for iOS.
-          STAGE="$GITHUB_WORKSPACE/stage"
-          mkdir -p "$STAGE/Payload" "$GITHUB_WORKSPACE/replacements"
-          python3 "$SRC/release/ios/prepare_testflight.py" "$APP" "$STAGE/Payload/Blender.app" \
-            --replacement-directory "$GITHUB_WORKSPACE/replacements" \
-            2>&1 | tee "$OUT/package.log"
-
-          cd "$STAGE"
-          zip -qry "$OUT/Blender-iPad.ipa" Payload
-          ls -lh "$OUT"
+          # LEAVE_OUT is intentionally unquoted: it is a space-separated list.
+          bash ci/package_ipa.sh "$APP" "$SRC" "$OUT" $LEAVE_OUT 2>&1 | tee "$OUT/package.log"
 
       - name: Upload .ipa and logs
         if: always()
