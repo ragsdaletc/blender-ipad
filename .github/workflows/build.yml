@@ -109,11 +109,15 @@ jobs:
 
       - name: Build host tools and Blender
         run: |
+          # The install step signs bundled libraries with Xcode's identity, which is empty
+          # when signing is off. "-" signs them ad hoc; Sideloadly re-signs everything later.
+          export EXPANDED_CODE_SIGN_IDENTITY=-
           # The app embeds the thumbnail extension but doesn't depend on it, so build it first.
           for target in blender-thumbnailer blender; do
             echo "::group::Building $target"
             cmake --build "$BUILD" --config Release --target "$target" -- \
               -sdk iphoneos -quiet CODE_SIGNING_ALLOWED=NO \
+              EXPANDED_CODE_SIGN_IDENTITY=- \
               2>&1 | tee -a "$OUT/build.log"
             echo "::endgroup::"
           done
