@@ -109,9 +109,14 @@ jobs:
 
       - name: Build host tools and Blender
         run: |
-          cmake --build "$BUILD" --config Release --target blender -- \
-            -sdk iphoneos -quiet CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$OUT/build.log"
+          # The app embeds the thumbnail extension but doesn't depend on it, so build it first.
+          for target in blender-thumbnailer blender; do
+            echo "::group::Building $target"
+            cmake --build "$BUILD" --config Release --target "$target" -- \
+              -sdk iphoneos -quiet CODE_SIGNING_ALLOWED=NO \
+              2>&1 | tee -a "$OUT/build.log"
+            echo "::endgroup::"
+          done
           df -h /
 
       - name: Package .ipa
